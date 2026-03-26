@@ -4,7 +4,7 @@ COMP2024 - Artificial Intelligence Methods
 IDS Feature Selection & Hyperparameter Optimisation using Metaheuristics
 =============================================================================
 Module  : main.py
-Purpose : Entry point – runs the full experimental pipeline:
+Purpose : Entry point - runs the full experimental pipeline:
             1. Data preprocessing & EDA
             2. Baseline Random Forest (all features, default HPs)
             3. Metaheuristic 1: Genetic Algorithm (GA)
@@ -17,10 +17,22 @@ Model   : Random Forest (fixed base classifier)
 
 Usage
 -----
-    python main.py [--quick]
+    python main.py [--quick] [--seed N]
 
     --quick  : reduce population/iterations for a fast test run (<5 min)
                omit this flag for the full experiment (~30-60 min)
+    --seed N : set global random seed (default 42)
+
+Note on train/val/test split
+-----------------------------
+    X_train_full / y_train_full : the complete NSL-KDD training set
+    X_train / X_val             : 80/20 stratified split of X_train_full
+        - X_train / y_train used INSIDE the metaheuristic fitness loops
+        - X_val   / y_val   used for fitness evaluation (validation set)
+        - X_train_full used for the FINAL model refit after search ends
+          (same data as the baseline, ensuring a fair comparison)
+    X_test / y_test             : held-out NSL-KDD test set (never touched
+                                  during search)
 
 Authors : Group XXX
 =============================================================================
@@ -80,7 +92,7 @@ def main():
     # Hyper-config: full vs quick mode
     # -----------------------------------------------------------------------
     if args.quick:
-        print("\n[MODE] Quick run – reduced iterations for fast testing.\n")
+        print("\n[MODE] Quick run - reduced iterations for fast testing.\n")
         GA_PARAMS  = dict(pop_size=15, n_generations=10)
         PSO_PARAMS = dict(n_particles=15, n_iterations=10)
         SA_PARAMS  = dict(max_iter=100, T0=1.0, cooling_rate=0.97)
@@ -94,14 +106,17 @@ def main():
     # 1.  Data preprocessing
     # -----------------------------------------------------------------------
     data = preprocess(eda=True)
-    X_train_full = data["X_train"]
+    X_train_full = data["X_train"]   # full NSL-KDD training set (scaled)
     X_test       = data["X_test"]
     y_train_full = data["y_train"]
     y_test       = data["y_test"]
     feature_names = data["feature_names"]
     n_features    = data["n_features"]
 
-    # Create a validation split from training data (used by metaheuristics)
+    # Create a validation split from training data.
+    # X_train / y_train  -> used INSIDE the metaheuristic fitness loops
+    # X_val   / y_val    -> used for fitness evaluation during search
+    # X_train_full       -> used for the FINAL refit after search completes
     X_train, X_val, y_train, y_val = train_test_split(
         X_train_full, y_train_full,
         test_size=0.2,
@@ -109,6 +124,8 @@ def main():
         stratify=y_train_full,
     )
     print(f"\n[Split] Train={X_train.shape[0]} | Val={X_val.shape[0]} | Test={X_test.shape[0]}")
+    print(f"[Note]  Final model refit after search uses X_train_full "
+          f"({X_train_full.shape[0]} samples) — same as baseline for fair comparison.")
 
     # -----------------------------------------------------------------------
     # 2.  Baseline model
@@ -131,6 +148,9 @@ def main():
         X_test,  y_test,
         n_features=n_features,
         feature_names=feature_names,
+        # --- FIX: pass full training set for fair final refit ---
+        X_train_full=X_train_full,
+        y_train_full=y_train_full,
         seed=args.seed,
         **GA_PARAMS,
     )
@@ -146,6 +166,9 @@ def main():
         X_test,  y_test,
         n_features=n_features,
         feature_names=feature_names,
+        # --- FIX: pass full training set for fair final refit ---
+        X_train_full=X_train_full,
+        y_train_full=y_train_full,
         seed=args.seed,
         **PSO_PARAMS,
     )
@@ -161,6 +184,9 @@ def main():
         X_test,  y_test,
         n_features=n_features,
         feature_names=feature_names,
+        # --- FIX: pass full training set for fair final refit ---
+        X_train_full=X_train_full,
+        y_train_full=y_train_full,
         seed=args.seed,
         **SA_PARAMS,
     )
@@ -197,7 +223,7 @@ def main():
     }
     with open("results/best_feature_masks.json", "w") as f:
         json.dump(feature_masks, f, indent=2)
-    print("  [Results] Saved → results/best_feature_masks.json")
+    print("  [Results] Saved -> results/best_feature_masks.json")
 
     # Save selected feature names per method
     for method, mask in feature_masks.items():
@@ -206,8 +232,8 @@ def main():
 
     print("\n" + "=" * 60)
     print("  EXPERIMENT COMPLETE")
-    print("  Plots  → ./plots/")
-    print("  Results→ ./results/")
+    print("  Plots  -> ./plots/")
+    print("  Results-> ./results/")
     print("=" * 60)
 
 

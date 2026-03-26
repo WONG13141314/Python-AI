@@ -13,13 +13,13 @@ PSO simulates a swarm of particles (candidate solutions) flying through the
 search space.  Each particle has a position (x) and velocity (v).
 
 Position encoding (same as GA chromosome):
-    [0 : n_features]               → feature mask (sigmoid → binarised)
-    [n_features : n_features+n_hp] → HP values clamped to [0, 1]
+    [0 : n_features]               -> feature mask (sigmoid -> binarised)
+    [n_features : n_features+n_hp] -> HP values clamped to [0, 1]
 
 Velocity update:
     v(t+1) = w * v(t)
-           + c1 * r1 * (pbest - x(t))     ← cognitive component
-           + c2 * r2 * (gbest - x(t))     ← social component
+           + c1 * r1 * (pbest - x(t))     <- cognitive component
+           + c2 * r2 * (gbest - x(t))     <- social component
 
 Position update:
     x(t+1) = x(t) + v(t+1)
@@ -28,11 +28,18 @@ For feature bits, the S-shaped transfer function maps position to a
 probability of the bit being 1 (binary PSO / BPSO approach by Kennedy &
 Eberhart 1997).
 
+Constraint handling
+-------------------
+    Hard constraint: at least one feature must be selected.
+    Enforced after binarisation: if all bits are 0, the feature dimension
+    with the highest sigmoid score is forced to 1. The final deterministic
+    mask (threshold 0.5) applies the same fallback using argmax.
+
 References
 ----------
 Kennedy, J. & Eberhart, R. (1995). Particle swarm optimization. ICNN.
 Kennedy, J. & Eberhart, R. (1997). A discrete binary version of the PSO.
-Clerc, M. & Kennedy, J. (2002). The particle swarm – explosion, stability …
+Clerc, M. & Kennedy, J. (2002). The particle swarm - explosion, stability.
 Authors : Group XXX
 =============================================================================
 """
@@ -60,8 +67,8 @@ def _init_particle(n_features: int, rng: np.random.Generator) -> tuple:
     Initialise a particle's position and velocity.
 
     Position layout (same as GA chromosome):
-        [0:n_features]         → continuous; binarised via sigmoid during eval
-        [n_features:]          → HP values in [0, 1]
+        [0:n_features]         -> continuous; binarised via sigmoid during eval
+        [n_features:]          -> HP values in [0, 1]
 
     Velocity: small random values centred on zero.
     """
@@ -78,9 +85,15 @@ def _binarise_features(pos: np.ndarray, n_features: int, rng: np.random.Generato
     """
     Convert continuous feature positions to binary mask using sigmoid.
     bit_i = 1  if  random() < sigmoid(pos_i)
+
+    Constraint: if all bits are 0 (degenerate case), force the dimension
+    with the highest sigmoid score to 1.
     """
     probs = _sigmoid(pos[:n_features])
     bits  = (rng.uniform(size=n_features) < probs).astype(float)
+    # Hard constraint: at least one feature must be selected
+    if bits.sum() == 0:
+        bits[np.argmax(probs)] = 1.0
     return bits
 
 
@@ -104,9 +117,15 @@ def run_pso(
     y_test: np.ndarray,
     n_features: int,
     feature_names: list,
+    # --- FIX: accept X_train_full / y_train_full for the final refit ---
+    # These are the FULL training set (before validation split).
+    # The validation split (X_train, y_train) is only used during
+    # fitness evaluation inside the swarm loop.
+    X_train_full: np.ndarray = None,
+    y_train_full: np.ndarray = None,
     n_particles: int   = 30,
     n_iterations: int  = 40,
-    w: float           = 0.7,    # inertia weight
+    w: float           = 0.7,    # inertia weight (kept for compat, overridden by decay)
     w_min: float       = 0.4,    # minimum inertia (linear decay)
     w_max: float       = 0.9,    # maximum inertia
     c1: float          = 2.0,    # cognitive coefficient
@@ -122,11 +141,14 @@ def run_pso(
     ----------
     n_particles  : swarm size
     n_iterations : number of iteration steps
-    w            : inertia weight (linearly decayed w_max→w_min each iter)
+    w            : inertia weight (linearly decayed w_max->w_min each iter)
     c1           : cognitive learning factor (personal best attraction)
     c2           : social learning factor (global best attraction)
     v_max_feat   : velocity clamp for feature-dimension velocities
     v_max_hp     : velocity clamp for HP-dimension velocities
+    X_train_full : full training set used ONLY for the final model refit
+                   (if None, falls back to X_train for backward compat)
+    y_train_full : labels for X_train_full
 
     Returns
     -------
@@ -137,6 +159,10 @@ def run_pso(
     print("  METAHEURISTIC 2: Particle Swarm Optimisation (PSO)")
     print(f"  Swarm size={n_particles}, Iterations={n_iterations}")
     print("=" * 60)
+
+    # Fall back to training split if full set not provided
+    X_fit = X_train_full if X_train_full is not None else X_train
+    y_fit = y_train_full if y_train_full is not None else y_train
 
     rng     = np.random.default_rng(seed)
     n_hp    = len(HP_KEYS)
@@ -222,12 +248,18 @@ def run_pso(
     best_feat_mask  = (best_feat_probs >= 0.5).astype(float)
     best_hp_vec     = np.clip(gbest_pos[n_features:], 0, 1)
 
+    # Constraint guard: ensure at least one feature selected
     if best_feat_mask.sum() == 0:
         best_feat_mask[np.argmax(best_feat_probs)] = 1.0
 
-    # ---- Final evaluation on held-out test set ----
+    print(f"\n  PSO final feature count (deterministic threshold 0.5): "
+          f"{int(best_feat_mask.sum())} / {n_features}")
+
+    # --- FIX: final refit uses the FULL training set (X_fit / y_fit),
+    # not just the 80% validation-excluded split. This ensures a fair
+    # comparison with the baseline RF which also trains on all data. ---
     metrics, clf, _ = train_and_evaluate(
-        X_train, y_train, X_test, y_test,
+        X_fit, y_fit, X_test, y_test,
         best_feat_mask, best_hp_vec,
         method_name="PSO",
         n_total_features=n_features,

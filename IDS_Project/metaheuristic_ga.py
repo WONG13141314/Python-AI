@@ -17,9 +17,16 @@ Each chromosome encodes:
 Operators:
     Selection   : Tournament selection (k=3)
     Crossover   : Uniform crossover for feature bits;
-                  arithmetic (BLX-α) crossover for HP values
+                  arithmetic (BLX-alpha) crossover for HP values
     Mutation    : Bit-flip for features; Gaussian perturbation for HPs
     Elitism     : Best solution carried over each generation
+
+Constraint handling
+-------------------
+    Hard constraint: at least one feature must be selected.
+    Enforced at two points:
+        (1) After mutation  - if all bits are 0, one random bit is flipped to 1.
+        (2) After evolution - fallback guard on the final best chromosome.
 
 References
 ----------
@@ -43,8 +50,8 @@ def _random_chromosome(n_features: int, rng: np.random.Generator) -> np.ndarray:
     Create a random chromosome of length (n_features + len(HP_KEYS)).
 
     Layout:
-        [0 : n_features]               → binary feature mask (0 or 1)
-        [n_features : n_features+n_hp] → HP values in [0, 1]
+        [0 : n_features]               -> binary feature mask (0 or 1)
+        [n_features : n_features+n_hp] -> HP values in [0, 1]
     """
     n_hp    = len(HP_KEYS)
     feature = rng.integers(0, 2, size=n_features).astype(float)   # {0, 1}
@@ -78,14 +85,14 @@ def _crossover(
     parent2: np.ndarray,
     n_features: int,
     crossover_rate: float,
-    alpha: float,           # BLX-α parameter
+    alpha: float,           # BLX-alpha parameter
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Produce two offspring from two parents.
 
     Feature bits : uniform crossover  (each bit independently swapped)
-    HP values    : BLX-α arithmetic crossover
+    HP values    : BLX-alpha arithmetic crossover
     """
     if rng.random() > crossover_rate:
         return parent1.copy(), parent2.copy()
@@ -95,7 +102,7 @@ def _crossover(
     f1    = np.where(mask == 0, parent1[:n_features], parent2[:n_features])
     f2    = np.where(mask == 0, parent2[:n_features], parent1[:n_features])
 
-    # ---- HP values: BLX-α crossover ----
+    # ---- HP values: BLX-alpha crossover ----
     p_hp1 = parent1[n_features:]
     p_hp2 = parent2[n_features:]
     lo    = np.minimum(p_hp1, p_hp2) - alpha * np.abs(p_hp1 - p_hp2)
@@ -119,13 +126,22 @@ def _mutate(
     Apply mutation in-place:
         Feature bits : flip with probability mutation_rate_feature
         HP values    : Gaussian perturbation with probability mutation_rate_hp
+
+    Constraint: if all feature bits are 0 after mutation, one random bit
+    is set to 1 (hard constraint - at least one feature must be selected).
+    Uses the seeded rng generator for full reproducibility.
     """
     chrom = chrom.copy()
 
     # Feature bit-flip mutation
     for i in range(n_features):
         if rng.random() < mutation_rate_feature:
-            chrom[i] = 1.0 - chrom[i]          # flip 0↔1
+            chrom[i] = 1.0 - chrom[i]          # flip 0 <-> 1
+
+    # --- FIX: use seeded rng.integers instead of np.random.randint ---
+    # Constraint: ensure at least one feature is selected
+    if chrom[:n_features].sum() == 0:
+        chrom[rng.integers(n_features)] = 1.0
 
     # HP Gaussian mutation
     n_hp = len(HP_KEYS)
@@ -149,6 +165,12 @@ def run_ga(
     y_test: np.ndarray,
     n_features: int,
     feature_names: list,
+    # --- FIX: accept X_train_full / y_train_full for the final refit ---
+    # These are the FULL training set (before validation split).
+    # The validation split (X_train, y_train) is only used during
+    # fitness evaluation inside the evolution loop.
+    X_train_full: np.ndarray = None,
+    y_train_full: np.ndarray = None,
     pop_size: int       = 30,
     n_generations: int  = 40,
     crossover_rate: float = 0.85,
@@ -169,7 +191,10 @@ def run_ga(
     mutation_rate_feature : per-bit flip probability for feature mask
     mutation_rate_hp      : per-gene Gaussian mutation probability for HPs
     tournament_k   : tournament size for selection
-    blx_alpha      : BLX-α parameter for HP crossover
+    blx_alpha      : BLX-alpha parameter for HP crossover
+    X_train_full   : full training set used ONLY for the final model refit
+                     (if None, falls back to X_train — for backward compat)
+    y_train_full   : labels for X_train_full
 
     Returns
     -------
@@ -180,6 +205,10 @@ def run_ga(
     print("  METAHEURISTIC 1: Genetic Algorithm (GA)")
     print(f"  Population={pop_size}, Generations={n_generations}")
     print("=" * 60)
+
+    # Fall back to training split if full set not provided
+    X_fit = X_train_full if X_train_full is not None else X_train
+    y_fit = y_train_full if y_train_full is not None else y_train
 
     rng = np.random.default_rng(seed)
     t_start = time.time()
@@ -195,7 +224,7 @@ def run_ga(
 
     # ---- Evolution loop ----
     for gen in range(n_generations):
-        # Evaluate all individuals
+        # Evaluate all individuals (uses validation split for fitness)
         fitness = np.array([
             evaluate_solution(
                 *_split_chromosome(chrom, n_features),
@@ -234,12 +263,15 @@ def run_ga(
     # ---- Final evaluation on held-out test set ----
     best_feat_mask, best_hp_vec = _split_chromosome(best_chrom, n_features)
 
-    # Ensure at least one feature is selected
+    # Constraint guard: ensure at least one feature selected
     if best_feat_mask.sum() == 0:
-        best_feat_mask[np.random.randint(n_features)] = 1.0
+        best_feat_mask[rng.integers(n_features)] = 1.0
 
+    # --- FIX: final refit uses the FULL training set (X_fit / y_fit),
+    # not just the 80% validation-excluded split. This ensures a fair
+    # comparison with the baseline RF which also trains on all data. ---
     metrics, clf, _ = train_and_evaluate(
-        X_train, y_train, X_test, y_test,
+        X_fit, y_fit, X_test, y_test,
         best_feat_mask, best_hp_vec,
         method_name="GA",
         n_total_features=n_features,

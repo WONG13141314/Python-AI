@@ -14,7 +14,7 @@ process in metallurgy.  Starting from a random solution, it explores the
 neighbourhood by generating a perturbed candidate solution.
 
 The acceptance criterion (Metropolis criterion) allows uphill moves
-with probability exp(−ΔE / T), where T is the current "temperature".
+with probability exp(-delta_E / T), where T is the current "temperature".
 This prevents premature convergence to local optima.
 
 Temperature schedule : geometric cooling  T(k) = T0 * r^k
@@ -25,6 +25,14 @@ Stopping: when T < T_min or max_iter reached.
 Neighbourhood operators:
     Feature mask : randomly flip a subset of bits
     HP values    : Gaussian perturbation clamped to [0, 1]
+
+Constraint handling
+-------------------
+    Hard constraint: at least one feature must be selected.
+    Enforced in two places:
+        (1) _perturb() - after flipping bits, if all are 0, one random
+            bit is restored to 1 using the seeded rng generator.
+        (2) Post-loop guard - fallback on best_feat before final refit.
 
 References
 ----------
@@ -74,6 +82,10 @@ def _perturb(
     ----------
     n_flip   : number of feature bits to flip
     hp_sigma : std of Gaussian perturbation applied to each HP
+
+    Constraint: after flipping, if all feature bits are 0, one random
+    bit is restored using the seeded rng (not np.random) to preserve
+    full reproducibility.
     """
     new_feat = feature_mask.copy()
     new_hp   = hp_vector.copy()
@@ -82,6 +94,10 @@ def _perturb(
     flip_idx = rng.choice(len(feature_mask), size=n_flip, replace=False)
     for idx in flip_idx:
         new_feat[idx] = 1.0 - new_feat[idx]
+
+    # Hard constraint: ensure at least one feature remains selected
+    if new_feat.sum() == 0:
+        new_feat[rng.integers(len(new_feat))] = 1.0
 
     # Gaussian perturbation for each HP
     noise     = rng.normal(0, hp_sigma, size=len(hp_vector))
@@ -103,6 +119,12 @@ def run_sa(
     y_test: np.ndarray,
     n_features: int,
     feature_names: list,
+    # --- FIX: accept X_train_full / y_train_full for the final refit ---
+    # These are the FULL training set (before validation split).
+    # The validation split (X_train, y_train) is only used during
+    # fitness evaluation inside the SA loop.
+    X_train_full: np.ndarray = None,
+    y_train_full: np.ndarray = None,
     max_iter: int       = 500,
     T0: float           = 1.0,    # initial temperature
     T_min: float        = 1e-4,   # stopping temperature
@@ -119,9 +141,12 @@ def run_sa(
     max_iter     : maximum number of iterations
     T0           : initial temperature
     T_min        : algorithm stops when T drops below this value
-    cooling_rate : geometric cooling rate (T ← T * cooling_rate each step)
+    cooling_rate : geometric cooling rate (T <- T * cooling_rate each step)
     n_flip       : number of feature bits flipped to create neighbour
     hp_sigma     : Gaussian noise std applied to HP values each step
+    X_train_full : full training set used ONLY for the final model refit
+                   (if None, falls back to X_train for backward compat)
+    y_train_full : labels for X_train_full
 
     Returns
     -------
@@ -132,6 +157,10 @@ def run_sa(
     print("  METAHEURISTIC 3: Simulated Annealing (SA)")
     print(f"  Max iter={max_iter}, T0={T0}, cooling={cooling_rate}")
     print("=" * 60)
+
+    # Fall back to training split if full set not provided
+    X_fit = X_train_full if X_train_full is not None else X_train
+    y_fit = y_train_full if y_train_full is not None else y_train
 
     rng     = np.random.default_rng(seed)
     t_start = time.time()
@@ -157,14 +186,10 @@ def run_sa(
             print(f"  [SA] Temperature below T_min ({T_min}). Stopping early at iter {it}.")
             break
 
-        # Generate neighbour
+        # Generate neighbour (constraint enforced inside _perturb)
         n_flip_cur = max(1, int(n_flip * (T / T0)))   # flip more bits when hot
         new_feat, new_hp = _perturb(current_feat, current_hp,
                                     n_flip_cur, hp_sigma, rng)
-
-        # Ensure at least one feature selected
-        if new_feat.sum() == 0:
-            new_feat[rng.integers(n_features)] = 1.0
 
         new_fitness = evaluate_solution(
             new_feat, new_hp,
@@ -174,13 +199,13 @@ def run_sa(
         # Metropolis acceptance criterion
         delta = new_fitness - current_fitness
         if delta > 0:
-            # Better solution – always accept
+            # Better solution - always accept
             current_feat    = new_feat
             current_hp      = new_hp
             current_fitness = new_fitness
             accepted_count += 1
         else:
-            # Worse solution – accept with probability exp(delta / T)
+            # Worse solution - accept with probability exp(delta / T)
             prob = np.exp(delta / T)
             if rng.random() < prob:
                 current_feat    = new_feat
@@ -208,12 +233,15 @@ def run_sa(
 
     runtime = time.time() - t_start
 
+    # Constraint guard: fallback in case best_feat is all zeros
     if best_feat.sum() == 0:
-        best_feat[0] = 1.0
+        best_feat[rng.integers(n_features)] = 1.0
 
-    # ---- Final evaluation on held-out test set ----
+    # --- FIX: final refit uses the FULL training set (X_fit / y_fit),
+    # not just the 80% validation-excluded split. This ensures a fair
+    # comparison with the baseline RF which also trains on all data. ---
     metrics, clf, _ = train_and_evaluate(
-        X_train, y_train, X_test, y_test,
+        X_fit, y_fit, X_test, y_test,
         best_feat, best_hp,
         method_name="SA",
         n_total_features=n_features,
