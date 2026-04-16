@@ -15,7 +15,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg")   # non-interactive backend — fixes Windows CMD tkinter error
+matplotlib.use("Agg")   # non-interactive backend -- fixes Windows CMD tkinter error
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
@@ -60,7 +60,7 @@ def decode_hyperparams(hp_vector: np.ndarray) -> dict:
 
     Returns
     -------
-    dict of hyperparameter name → value
+    dict of hyperparameter name -> value
     """
     params = {}
     for i, key in enumerate(HP_KEYS):
@@ -81,16 +81,22 @@ def evaluate_solution(
     y_train: np.ndarray,
     X_val: np.ndarray,
     y_val: np.ndarray,
-    alpha: float = 0.9,
-    beta: float = 0.1,
+    alpha: float = 0.85,
+    beta: float = 0.05,
+    gamma: float = 0.10,
+    rf_n_jobs: int = -1,
 ) -> float:
     """
     Fitness function shared by all metaheuristics.
 
-    Fitness = alpha * F1_score  -  beta * (n_selected / n_total)
+    Fitness = alpha * F1_score
+            - beta  * (n_selected / n_total)
+            - gamma * FPR
 
-    A HIGHER fitness is BETTER.  The second term penalises selecting too
-    many features, encouraging sparse solutions.
+    A HIGHER fitness is BETTER.
+    - The beta term penalises selecting too many features (sparse solutions).
+    - The gamma term penalises false positives, which is critical for IDS
+      deployments where false alarms cause alert fatigue.
 
     Parameters
     ----------
@@ -98,8 +104,10 @@ def evaluate_solution(
     hp_vector    : continuous array of shape (len(HP_KEYS),), values in [0,1]
     X_train, y_train : training data
     X_val,   y_val   : validation / test data
-    alpha : weight for F1 score (accuracy component)
-    beta  : weight for feature penalty
+    alpha : weight for F1 score (detection quality)
+    beta  : weight for feature-count penalty
+    gamma : weight for false positive rate penalty
+    rf_n_jobs : number of CPU cores for Random Forest (use 1 if evaluating in parallel)
 
     Returns
     -------
@@ -122,15 +130,20 @@ def evaluate_solution(
         min_samples_leaf=params["min_samples_leaf"],
         max_features=min(params["max_features"], 1.0),
         random_state=42,
-        n_jobs=-1,
+        n_jobs=rf_n_jobs,
     )
     clf.fit(X_tr, y_train)
     y_pred = clf.predict(X_vl)
 
     f1  = f1_score(y_val, y_pred, zero_division=0)
-    fpr_penalty = feature_mask.mean()           # fraction of features used
+    feat_ratio = feature_mask.mean()     # fraction of features used
 
-    fitness = alpha * f1 - beta * fpr_penalty
+    # Compute FPR from confusion matrix
+    cm = confusion_matrix(y_val, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+
+    fitness = alpha * f1 - beta * feat_ratio - gamma * fpr
     return fitness
 
 
@@ -165,6 +178,10 @@ def compute_metrics(
     fpr  = fp / (fp + tn) if (fp + tn) > 0 else 0.0   # False Positive Rate
     tpr  = tp / (tp + fn) if (tp + fn) > 0 else 0.0   # True Positive Rate / Detection Rate
 
+    # ROC / AUC
+    fpr_curve, tpr_curve, _ = roc_curve(y_test, y_prob)
+    auc_score = auc(fpr_curve, tpr_curve)
+
     n_features_used  = int(feature_mask.sum())
     n_total = n_total_features or len(feature_mask)
 
@@ -175,9 +192,14 @@ def compute_metrics(
         "Recall (TPR)":     round(rec,  4),
         "F1-Score":         round(f1,   4),
         "FPR":              round(fpr,  4),
+        "AUC":              round(auc_score, 4),
         "N_Features":       n_features_used,
         "N_Total_Features": n_total,
         "Feature_Ratio":    round(n_features_used / n_total, 4),
+        # Store curves for ROC plot (not saved to CSV)
+        "_fpr_curve":       fpr_curve,
+        "_tpr_curve":       tpr_curve,
+        "_confusion_matrix": cm,
     }
     return metrics
 
@@ -193,7 +215,7 @@ def train_and_evaluate(
     n_total_features: int,
 ) -> tuple[dict, RandomForestClassifier, float]:
     """
-    Final train → evaluate pass.  Returns (metrics_dict, fitted_clf, runtime).
+    Final train -> evaluate pass.  Returns (metrics_dict, fitted_clf, runtime).
     """
     params = decode_hyperparams(hp_vector)
     selected_idx = np.where(feature_mask > 0.5)[0]
@@ -257,7 +279,7 @@ def run_baseline(
     clf.fit(X_train, y_train)
     runtime = time.time() - t0
 
-    # All features selected → mask of ones
+    # All features selected -> mask of ones
     full_mask = np.ones(X_train.shape[1])
 
     metrics = compute_metrics(
@@ -286,6 +308,7 @@ def _print_metrics(m: dict) -> None:
     print(f"  Recall(TPR) : {m['Recall (TPR)']:.4f}")
     print(f"  F1-Score    : {m['F1-Score']:.4f}")
     print(f"  FPR         : {m['FPR']:.4f}")
+    print(f"  AUC         : {m.get('AUC', '?')}")
     print(f"  Features    : {m['N_Features']} / {m['N_Total_Features']}")
     print(f"  Runtime     : {m.get('Runtime_s', '?')} s")
 
@@ -319,7 +342,7 @@ def plot_convergence_curves(
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"  [Plot] Saved → {save_path}")
+    print(f"  [Plot] Saved -> {save_path}")
 
 
 def plot_metrics_comparison(
@@ -353,7 +376,7 @@ def plot_metrics_comparison(
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"  [Plot] Saved → {save_path}")
+    print(f"  [Plot] Saved -> {save_path}")
 
 
 def plot_feature_reduction(
@@ -385,7 +408,7 @@ def plot_feature_reduction(
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"  [Plot] Saved → {save_path}")
+    print(f"  [Plot] Saved -> {save_path}")
 
 
 def plot_tradeoff_scatter(
@@ -402,7 +425,7 @@ def plot_tradeoff_scatter(
     colours = ["steelblue", "tomato", "seagreen", "darkorange", "purple"]
 
     for i, row in df.iterrows():
-        size = 300 + 1000 * row["Feature_Ratio"]   # bigger → more features
+        size = 300 + 1000 * row["Feature_Ratio"]   # bigger -> more features
         ax.scatter(row["FPR"], row["F1-Score"],
                    s=size, color=colours[i % len(colours)],
                    alpha=0.7, edgecolors="black", linewidth=1.2)
@@ -410,9 +433,9 @@ def plot_tradeoff_scatter(
                     xy=(row["FPR"], row["F1-Score"]),
                     xytext=(5, 5), textcoords="offset points", fontsize=9)
 
-    ax.set_xlabel("False Positive Rate (FPR)  ← lower is better")
-    ax.set_ylabel("F1-Score  ← higher is better")
-    ax.set_title("Trade-Off: F1-Score vs FPR\n(bubble size ∝ feature ratio)")
+    ax.set_xlabel("False Positive Rate (FPR)  <- lower is better")
+    ax.set_ylabel("F1-Score  <- higher is better")
+    ax.set_title("Trade-Off: F1-Score vs FPR\n(bubble size prop. to feature ratio)")
     ax.grid(True, linestyle="--", alpha=0.4)
     # Ideal corner annotation
     ax.annotate("Ideal", xy=(0, 1), xytext=(0.02, 0.92),
@@ -422,7 +445,116 @@ def plot_tradeoff_scatter(
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"  [Plot] Saved → {save_path}")
+    print(f"  [Plot] Saved -> {save_path}")
+
+
+def plot_roc_curves(
+    all_metrics: list[dict],
+    save_path: str = "plots/roc_curves.png",
+) -> None:
+    """
+    Overlay ROC curves for all methods on a single plot.
+    Includes AUC values in the legend.
+    """
+    fig, ax = plt.subplots(figsize=(8, 7))
+    colours = ["steelblue", "tomato", "seagreen", "darkorange", "purple"]
+
+    for i, m in enumerate(all_metrics):
+        fpr_c = m.get("_fpr_curve")
+        tpr_c = m.get("_tpr_curve")
+        auc_val = m.get("AUC", 0)
+        if fpr_c is not None and tpr_c is not None:
+            ax.plot(fpr_c, tpr_c,
+                    label=f"{m['Method']} (AUC={auc_val:.4f})",
+                    color=colours[i % len(colours)], linewidth=2)
+
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.4, label="Random (AUC=0.5)")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curves -- All Methods")
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(True, linestyle="--", alpha=0.4)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"  [Plot] Saved -> {save_path}")
+
+
+def plot_confusion_matrices(
+    all_metrics: list[dict],
+    save_path: str = "plots/confusion_matrices.png",
+) -> None:
+    """
+    Plot confusion matrix heatmaps side-by-side for all methods.
+    """
+    n = len(all_metrics)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4.5))
+    if n == 1:
+        axes = [axes]
+
+    for i, m in enumerate(all_metrics):
+        cm = m.get("_confusion_matrix")
+        if cm is None:
+            continue
+        sns.heatmap(
+            cm, annot=True, fmt="d", cmap="Blues",
+            xticklabels=["Normal", "Attack"],
+            yticklabels=["Normal", "Attack"],
+            ax=axes[i],
+            cbar=False,
+        )
+        axes[i].set_title(f"{m['Method']}")
+        axes[i].set_xlabel("Predicted")
+        axes[i].set_ylabel("Actual")
+
+    plt.suptitle("Confusion Matrices", fontsize=14, y=1.02)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  [Plot] Saved -> {save_path}")
+
+
+def plot_runtime_comparison(
+    all_metrics: list[dict],
+    save_path: str = "plots/runtime_comparison.png",
+) -> None:
+    """
+    Bar chart comparing runtime (seconds) across all methods.
+    Uses log scale if there is a large spread.
+    """
+    df = pd.DataFrame(all_metrics)
+    fig, ax = plt.subplots(figsize=(9, 5))
+    colours = ["steelblue", "tomato", "seagreen", "darkorange", "purple"]
+    x = np.arange(len(df))
+
+    bars = ax.bar(x, df["Runtime_s"],
+                  color=[colours[i % len(colours)] for i in x],
+                  edgecolor="black", alpha=0.85)
+
+    # Add value labels on bars
+    for bar, val in zip(bars, df["Runtime_s"]):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
+                f"{val:.1f}s", ha="center", va="bottom", fontsize=9)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(df["Method"], rotation=15, ha="right")
+    ax.set_ylabel("Runtime (seconds)")
+    ax.set_title("Computational Cost Comparison")
+    ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+
+    # Use log scale if max/min ratio > 50
+    runtimes = df["Runtime_s"].values
+    if runtimes.max() / max(runtimes.min(), 0.01) > 50:
+        ax.set_yscale("log")
+        ax.set_ylabel("Runtime (seconds, log scale)")
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"  [Plot] Saved -> {save_path}")
 
 
 def save_results_csv(
@@ -431,7 +563,12 @@ def save_results_csv(
 ) -> None:
     """Save all metrics to CSV for easy inclusion in the paper."""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    df = pd.DataFrame(all_metrics)
+    # Filter out internal arrays (ROC curves, confusion matrices)
+    csv_metrics = [
+        {k: v for k, v in m.items() if not k.startswith("_")}
+        for m in all_metrics
+    ]
+    df = pd.DataFrame(csv_metrics)
     df.to_csv(save_path, index=False)
-    print(f"\n  [Results] Saved → {save_path}")
+    print(f"\n  [Results] Saved -> {save_path}")
     print(df.to_string(index=False))

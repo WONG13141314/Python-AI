@@ -14,6 +14,7 @@ Detection System (IDS) classifier trained on the **NSL-KDD** dataset.
 | Genetic Algorithm (GA) | Evolutionary | Population-based, crossover + mutation |
 | Particle Swarm Optimisation (PSO) | Swarm intelligence | Velocity-guided particle movement |
 | Simulated Annealing (SA) | Trajectory-based | Probabilistic local search |
+| NSGA-II | Multi-objective evolutionary | Non-dominated sorting + crowding distance |
 
 All three are benchmarked against a **Baseline Random Forest** (all features,
 default sklearn hyperparameters).
@@ -25,11 +26,12 @@ default sklearn hyperparameters).
 ```
 IDS_Project/
 ├── main.py                   ← Entry point (run this)
-├── data_preprocessing.py     ← Download, clean, scale NSL-KDD
+├── data_preprocessing.py     ← Download, clean, OHE, scale NSL-KDD
 ├── evaluation.py             ← Fitness function, metrics, plots
 ├── metaheuristic_ga.py       ← Genetic Algorithm
 ├── metaheuristic_pso.py      ← Particle Swarm Optimisation
 ├── metaheuristic_sa.py       ← Simulated Annealing
+├── metaheuristic_nsga2.py    ← NSGA-II (Multi-Objective)
 ├── requirements.txt          ← Python dependencies
 ├── README.md                 ← This file
 ├── data/                     ← NSL-KDD files (auto-downloaded)
@@ -95,7 +97,7 @@ python main.py --seed 123
 
 | Output | Location | Description |
 |--------|----------|-------------|
-| Metrics CSV | `results/all_metrics.csv` | Accuracy, F1, FPR, etc. for all methods |
+| Metrics CSV | `results/all_metrics.csv` | Accuracy, F1, FPR, AUC etc. for all methods |
 | Feature masks | `results/best_feature_masks.json` | Binary feature masks per method |
 | Class distribution | `plots/class_distribution.png` | Attack vs Normal counts |
 | Feature importance | `plots/feature_importances.png` | RF baseline feature ranking |
@@ -104,6 +106,10 @@ python main.py --seed 123
 | Metrics comparison | `plots/metrics_comparison.png` | Grouped bar chart |
 | Feature reduction | `plots/feature_reduction.png` | Features selected vs total |
 | Trade-off scatter | `plots/tradeoff_scatter.png` | F1 vs FPR bubble chart |
+| ROC curves | `plots/roc_curves.png` | Overlaid ROC curves with AUC |
+| Confusion matrices | `plots/confusion_matrices.png` | Side-by-side heatmaps |
+| Runtime comparison | `plots/runtime_comparison.png` | Computational cost bar chart |
+| Pareto front | `plots/pareto_front.png` | NSGA-II multi-objective trade-off |
 
 ---
 
@@ -119,27 +125,45 @@ Each metaheuristic searches over:
 
 | Variable | Type | Range |
 |----------|------|-------|
-| Feature mask | Binary | {0, 1}^41 |
+| Feature mask | Binary | {0, 1}^N (N ≈ 122 after OHE) |
 | `n_estimators` | Integer | [10, 300] |
 | `max_depth` | Integer | [2, 30] |
 | `min_samples_split` | Integer | [2, 20] |
 | `min_samples_leaf` | Integer | [1, 10] |
 | `max_features` | Float | [0.1, 1.0] |
 
-### Fitness Function
+### Fitness Function (Single-Objective: GA, PSO, SA)
 
 ```
-Fitness = 0.9 × F1_score  −  0.1 × (features_selected / total_features)
+Fitness = 0.85 × F1_score  −  0.05 × feature_ratio  −  0.10 × FPR
 ```
 
 A higher fitness is better. The penalty term encourages sparse feature subsets.
+
+The FPR penalty directly encourages the optimiser to reduce false positives,
+which is critical in IDS security deployments.
+
+### Multi-Objective Fitness (NSGA-II)
+
+NSGA-II does NOT combine objectives into a scalar. Instead it simultaneously
+optimises two conflicting objectives:
+
+```
+Objective 1 (min): -F1 + 0.1×FPR   (maximise detection, minimise false alarms)
+Objective 2 (min):  feature_ratio   (minimise complexity)
+```
+
+The result is a Pareto front; the "knee-point" solution is selected as the
+recommended output.
 
 ### Evaluation Metrics
 
 - Accuracy, Precision, Recall (TPR), F1-Score
 - False Positive Rate (FPR)
+- AUC (Area Under ROC Curve)
 - Number of Features Selected
 - Runtime (seconds)
+- Pareto front (NSGA-II)
 
 ---
 
@@ -163,6 +187,13 @@ A higher fitness is better. The penalty term encourages sparse feature subsets.
 - **Acceptance**: Metropolis criterion  exp(ΔE / T)
 - **Cooling**: geometric schedule  T ← T × 0.97
 - **Adaptive**: number of bits flipped scales with temperature
+
+### NSGA-II (Multi-Objective)
+- **Encoding**: same chromosome as GA (binary features + continuous HPs)
+- **Ranking**: fast non-dominated sorting into Pareto fronts
+- **Diversity**: crowding distance to maintain spread on the front
+- **Selection**: tournament based on (1) front rank, (2) crowding distance
+- **Output**: full Pareto front + knee-point recommended solution
 
 ---
 

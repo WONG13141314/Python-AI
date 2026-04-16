@@ -46,6 +46,7 @@ Authors : Group XXX
 
 import numpy as np
 import time
+from joblib import Parallel, delayed
 from evaluation import evaluate_solution, train_and_evaluate, HP_KEYS, _print_metrics
 
 
@@ -196,15 +197,21 @@ def run_pso(
         # Linear inertia decay: improves exploration early, exploitation late
         w_cur = w_max - (w_max - w_min) * (iteration / n_iterations)
 
-        for i in range(n_particles):
-            # Binarise feature part for fitness evaluation
-            feat_mask = _binarise_features(positions[i], n_features, rng)
-            hp_vec    = np.clip(positions[i][n_features:], 0, 1)
+        # Prepare arguments for parallel evaluation
+        feat_masks = [_binarise_features(positions[i], n_features, rng) for i in range(n_particles)]
+        hp_vecs    = [np.clip(positions[i][n_features:], 0, 1) for i in range(n_particles)]
 
-            fit = evaluate_solution(
-                feat_mask, hp_vec,
-                X_train, y_train, X_val, y_val,
+        # Evaluate all particles in parallel
+        fitnesses = Parallel(n_jobs=-1)(
+            delayed(evaluate_solution)(
+                feat_masks[i], hp_vecs[i],
+                X_train, y_train, X_val, y_val, rf_n_jobs=1
             )
+            for i in range(n_particles)
+        )
+
+        for i in range(n_particles):
+            fit = fitnesses[i]
 
             # Update personal best
             if fit > pbest_fitness[i]:

@@ -55,12 +55,16 @@ from evaluation import (
     plot_metrics_comparison,
     plot_feature_reduction,
     plot_tradeoff_scatter,
+    plot_roc_curves,
+    plot_confusion_matrices,
+    plot_runtime_comparison,
     save_results_csv,
     _print_metrics,
 )
-from metaheuristic_ga  import run_ga
-from metaheuristic_pso import run_pso
-from metaheuristic_sa  import run_sa
+from metaheuristic_ga    import run_ga
+from metaheuristic_pso   import run_pso
+from metaheuristic_sa    import run_sa
+from metaheuristic_nsga2 import run_nsga2
 
 
 # ---------------------------------------------------------------------------
@@ -93,14 +97,16 @@ def main():
     # -----------------------------------------------------------------------
     if args.quick:
         print("\n[MODE] Quick run - reduced iterations for fast testing.\n")
-        GA_PARAMS  = dict(pop_size=15, n_generations=10)
-        PSO_PARAMS = dict(n_particles=15, n_iterations=10)
-        SA_PARAMS  = dict(max_iter=100, T0=1.0, cooling_rate=0.97)
+        GA_PARAMS    = dict(pop_size=15, n_generations=10)
+        PSO_PARAMS   = dict(n_particles=15, n_iterations=10)
+        SA_PARAMS    = dict(max_iter=100, T0=1.0, cooling_rate=0.97)
+        NSGA2_PARAMS = dict(pop_size=15, n_generations=10)
     else:
         print("\n[MODE] Full experiment.\n")
-        GA_PARAMS  = dict(pop_size=30, n_generations=40)
-        PSO_PARAMS = dict(n_particles=30, n_iterations=40)
-        SA_PARAMS  = dict(max_iter=500, T0=1.0, cooling_rate=0.97)
+        GA_PARAMS    = dict(pop_size=30, n_generations=40)
+        PSO_PARAMS   = dict(n_particles=30, n_iterations=40)
+        SA_PARAMS    = dict(max_iter=1000, T0=1.0, cooling_rate=0.97)
+        NSGA2_PARAMS = dict(pop_size=30, n_generations=40)
 
     # -----------------------------------------------------------------------
     # 1.  Data preprocessing
@@ -125,7 +131,7 @@ def main():
     )
     print(f"\n[Split] Train={X_train.shape[0]} | Val={X_val.shape[0]} | Test={X_test.shape[0]}")
     print(f"[Note]  Final model refit after search uses X_train_full "
-          f"({X_train_full.shape[0]} samples) — same as baseline for fair comparison.")
+          f"({X_train_full.shape[0]} samples) -- same as baseline for fair comparison.")
 
     # -----------------------------------------------------------------------
     # 2.  Baseline model
@@ -194,7 +200,24 @@ def main():
     convergence_curves["SA"] = sa_result["convergence_curve"]
 
     # -----------------------------------------------------------------------
-    # 6.  Comparative visualisation & results
+    # 6.  NSGA-II (Multi-Objective)
+    # -----------------------------------------------------------------------
+    nsga2_result = run_nsga2(
+        X_train, y_train,
+        X_val,   y_val,
+        X_test,  y_test,
+        n_features=n_features,
+        feature_names=feature_names,
+        X_train_full=X_train_full,
+        y_train_full=y_train_full,
+        seed=args.seed,
+        **NSGA2_PARAMS,
+    )
+    all_metrics.append(nsga2_result["metrics"])
+    convergence_curves["NSGA-II"] = nsga2_result["convergence_curve"]
+
+    # -----------------------------------------------------------------------
+    # 7.  Comparative visualisation & results
     # -----------------------------------------------------------------------
     print("\n" + "=" * 60)
     print("  RESULTS SUMMARY")
@@ -211,15 +234,19 @@ def main():
     plot_metrics_comparison(all_metrics)
     plot_feature_reduction(all_metrics)
     plot_tradeoff_scatter(all_metrics)
+    plot_roc_curves(all_metrics)
+    plot_confusion_matrices(all_metrics)
+    plot_runtime_comparison(all_metrics)
 
     # Save CSV
     save_results_csv(all_metrics)
 
     # Save feature masks as JSON (useful for reproducibility)
     feature_masks = {
-        "GA":  ga_result["best_feature_mask"].tolist(),
-        "PSO": pso_result["best_feature_mask"].tolist(),
-        "SA":  sa_result["best_feature_mask"].tolist(),
+        "GA":      ga_result["best_feature_mask"].tolist(),
+        "PSO":     pso_result["best_feature_mask"].tolist(),
+        "SA":      sa_result["best_feature_mask"].tolist(),
+        "NSGA-II": nsga2_result["best_feature_mask"].tolist(),
     }
     with open("results/best_feature_masks.json", "w") as f:
         json.dump(feature_masks, f, indent=2)
