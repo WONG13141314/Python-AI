@@ -7,7 +7,7 @@
 
 This project implements **three metaheuristic algorithms** for joint
 feature selection and hyperparameter tuning of a **Random Forest** Intrusion
-Detection System (IDS) classifier trained on the **NSL-KDD** dataset.
+Detection System (IDS) classifier trained on the **CICIDS2017** dataset.
 
 | Algorithm | Type | Search Strategy |
 |-----------|------|-----------------|
@@ -26,7 +26,7 @@ default sklearn hyperparameters).
 ```
 IDS_Project/
 ├── main.py                   ← Entry point (run this)
-├── data_preprocessing.py     ← Download, clean, OHE, scale NSL-KDD
+├── data_preprocessing.py     ← Download, clean, OHE, scale CICIDS2017
 ├── evaluation.py             ← Fitness function, metrics, plots
 ├── metaheuristic_ga.py       ← Genetic Algorithm
 ├── metaheuristic_pso.py      ← Particle Swarm Optimisation
@@ -34,7 +34,7 @@ IDS_Project/
 ├── metaheuristic_nsga2.py    ← NSGA-II (Multi-Objective)
 ├── requirements.txt          ← Python dependencies
 ├── README.md                 ← This file
-├── data/                     ← NSL-KDD files (auto-downloaded)
+├── data/                     ← CICIDS2017 files (auto-downloaded)
 ├── plots/                    ← All generated figures
 └── results/                  ← CSV metrics + feature masks JSON
 ```
@@ -61,7 +61,7 @@ pip install numpy pandas scikit-learn matplotlib seaborn
 
 ### 3. Dataset
 
-The **NSL-KDD** dataset is **downloaded automatically** on the first run
+The **CICIDS2017** dataset is **downloaded automatically** on the first run
 from the public GitHub mirror:
 
 > https://github.com/defcom17/NSL_KDD

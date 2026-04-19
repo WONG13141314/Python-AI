@@ -4,17 +4,16 @@ COMP2024 - Artificial Intelligence Methods
 IDS Feature Selection & Hyperparameter Optimisation using Metaheuristics
 =============================================================================
 Module  : data_preprocessing.py
-Purpose : Download, load, and preprocess the NSL-KDD dataset for binary
+Purpose : Load and preprocess the CICIDS2017 dataset for binary
           classification (Normal vs Attack).
-Dataset : NSL-KDD  
-          https://www.unb.ca/cic/datasets/nsl.html
+Dataset : CICIDS2017
+          https://www.unb.ca/cic/datasets/ids-2017.html
 Authors : Group XXX
 =============================================================================
 """
 
 import os
-import io
-import urllib.request
+import glob
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -25,150 +24,71 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
 
-# ---------------------------------------------------------------------------
-# NSL-KDD Column Definitions
-# ---------------------------------------------------------------------------
-NSL_KDD_COLUMNS = [
-    "duration", "protocol_type", "service", "flag", "src_bytes",
-    "dst_bytes", "land", "wrong_fragment", "urgent", "hot",
-    "num_failed_logins", "logged_in", "num_compromised", "root_shell",
-    "su_attempted", "num_root", "num_file_creations", "num_shells",
-    "num_access_files", "num_outbound_cmds", "is_host_login",
-    "is_guest_login", "count", "srv_count", "serror_rate",
-    "srv_serror_rate", "rerror_rate", "srv_rerror_rate", "same_srv_rate",
-    "diff_srv_rate", "srv_diff_host_rate", "dst_host_count",
-    "dst_host_srv_count", "dst_host_same_srv_rate", "dst_host_diff_srv_rate",
-    "dst_host_same_src_port_rate", "dst_host_srv_diff_host_rate",
-    "dst_host_serror_rate", "dst_host_srv_serror_rate",
-    "dst_host_rerror_rate", "dst_host_srv_rerror_rate",
-    "label", "difficulty"
-]
-
-# URLs for NSL-KDD dataset files (plain .txt, no login required)
-TRAIN_URL = (
-    "https://raw.githubusercontent.com/defcom17/NSL_KDD/master/"
-    "KDDTrain%2B.txt"
-)
-TEST_URL = (
-    "https://raw.githubusercontent.com/defcom17/NSL_KDD/master/"
-    "KDDTest%2B.txt"
-)
-
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-
-
-# ---------------------------------------------------------------------------
-# Download helpers
-# ---------------------------------------------------------------------------
-
-def _download_file(url: str, dest_path: str) -> None:
-    """Download a file from *url* to *dest_path* with a progress indicator."""
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    print(f"  Downloading {os.path.basename(dest_path)} … ", end="", flush=True)
-    urllib.request.urlretrieve(url, dest_path)
-    size_kb = os.path.getsize(dest_path) / 1024
-    print(f"done  ({size_kb:.0f} KB)")
-
-
-def download_nsl_kdd(data_dir: str = DATA_DIR) -> tuple[str, str]:
-    """
-    Ensure the NSL-KDD train / test files exist locally.
-
-    Returns
-    -------
-    train_path, test_path : str
-    """
-    train_path = os.path.join(data_dir, "KDDTrain+.txt")
-    test_path  = os.path.join(data_dir, "KDDTest+.txt")
-
-    if not os.path.exists(train_path):
-        _download_file(TRAIN_URL, train_path)
-    else:
-        print(f"  Train file already exists: {train_path}")
-
-    if not os.path.exists(test_path):
-        _download_file(TEST_URL, test_path)
-    else:
-        print(f"  Test  file already exists: {test_path}")
-
-    return train_path, test_path
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "MachineLearningCSV", "MachineLearningCVE")
 
 
 # ---------------------------------------------------------------------------
 # Loading & cleaning
 # ---------------------------------------------------------------------------
 
-def load_nsl_kdd(train_path: str, test_path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_cicids2017(data_dir: str = DATA_DIR, sample_frac: float = 0.05, random_state: int = 42) -> pd.DataFrame:
     """
-    Load NSL-KDD CSV files into DataFrames.
-
-    The raw files have no header; columns are assigned from NSL_KDD_COLUMNS.
-    The 'difficulty' column (last) is dropped as it is not a feature.
+    Load CICIDS2017 CSV files from the given directory, clean col names, 
+    handle Inf/NaN, and return a concatenated, sampled DataFrame.
     """
-    train_df = pd.read_csv(train_path, header=None, names=NSL_KDD_COLUMNS)
-    test_df  = pd.read_csv(test_path,  header=None, names=NSL_KDD_COLUMNS)
+    all_files = glob.glob(os.path.join(data_dir, "*.csv"))
+    if not all_files:
+        raise FileNotFoundError(f"No CSV files found in {data_dir}. Please ensure the CICIDS2017 dataset is extracted there.")
 
-    # Drop difficulty score – not used in modelling
-    train_df.drop(columns=["difficulty"], inplace=True)
-    test_df.drop(columns=["difficulty"],  inplace=True)
+    print(f"  [Data] Found {len(all_files)} CSV files. Loading and concatenating...")
+    
+    df_list = []
+    total_rows = 0
+    for file in all_files:
+        df = pd.read_csv(file)
+        total_rows += len(df)
+        df_list.append(df)
+        
+    full_df = pd.concat(df_list, ignore_index=True)
+    print(f"  [Data] Concatenated shape : {full_df.shape} (Total rows: {total_rows})")
 
-    print(f"\n[Data] Train shape : {train_df.shape}")
-    print(f"[Data] Test  shape : {test_df.shape}")
-    return train_df, test_df
+    # Clean column names (strip leading/trailing whitespaces)
+    full_df.columns = full_df.columns.str.strip()
+
+    # Replace Infinity with NaN and drop rows with NaN
+    full_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    initial_len = len(full_df)
+    full_df.dropna(inplace=True)
+    dropped = initial_len - len(full_df)
+    if dropped > 0:
+        print(f"  [Data] Dropped {dropped} rows containing Infinity or NaN.")
+
+    # Stratified downsampling
+    if sample_frac < 1.0:
+        print(f"  [Data] Downsampling dataset by fraction {sample_frac} (stratified by Label)...")
+        # Ensure we do a stratified sample
+        _, sampled_df = train_test_split(
+            full_df, 
+            test_size=sample_frac, 
+            stratify=full_df["Label"], 
+            random_state=random_state
+        )
+        print(f"  [Data] Downsampled shape : {sampled_df.shape}")
+        return sampled_df
+    
+    return full_df
 
 
 def binarise_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert multi-class attack labels to binary:
-        'normal' -> 0
+        'BENIGN' -> 0
         anything else -> 1  (attack)
     """
     df = df.copy()
-    df["label"] = df["label"].apply(lambda x: 0 if x.strip() == "normal" else 1)
+    # Unique values like 'BENIGN', 'DDoS', 'PortScan', etc.
+    df["Label"] = df["Label"].apply(lambda x: 0 if str(x).strip() == "BENIGN" else 1)
     return df
-
-
-def encode_categoricals(
-    train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
-    cat_cols: list[str] = ("protocol_type", "service", "flag"),
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
-    """
-    One-Hot-Encode categorical columns.
-
-    The training-set category vocabulary is used as the reference.
-    Any category present in the test set but absent from training is
-    silently ignored (its OHE columns will all be 0).  This avoids
-    data leakage and handles unseen categories safely.
-
-    Returns
-    -------
-    train_enc, test_enc : DataFrames with OHE columns replacing originals
-    ohe_columns         : list of newly created OHE column names
-    """
-    train_enc = train_df.copy()
-    test_enc  = test_df.copy()
-
-    # Get dummies on training set (creates the reference column set)
-    train_enc = pd.get_dummies(train_enc, columns=list(cat_cols), dtype=float)
-
-    # Get dummies on test set, then align columns to training set
-    test_enc = pd.get_dummies(test_enc, columns=list(cat_cols), dtype=float)
-
-    # Align: add missing columns as 0, drop extra columns
-    missing_cols = set(train_enc.columns) - set(test_enc.columns)
-    for c in missing_cols:
-        test_enc[c] = 0.0
-    test_enc = test_enc[train_enc.columns]   # enforce same column order
-
-    ohe_columns = [c for c in train_enc.columns
-                   if any(c.startswith(cat + "_") for cat in cat_cols)]
-
-    print(f"  [OHE] Categorical columns expanded: {list(cat_cols)}")
-    print(f"  [OHE] New feature count: {len(train_enc.columns) - 1}")
-    print(f"  [OHE] One-hot columns added: {len(ohe_columns)}")
-
-    return train_enc, test_enc, ohe_columns
 
 
 def scale_features(
@@ -189,22 +109,22 @@ def scale_features(
 # Exploratory analysis helpers
 # ---------------------------------------------------------------------------
 
-def class_distribution(df: pd.DataFrame, label_col: str = "label") -> None:
+def class_distribution(df: pd.DataFrame, label_col: str = "Label") -> None:
     """Print and plot class distribution."""
     counts = df[label_col].value_counts()
-    labels_map = {0: "Normal", 1: "Attack"}
+    labels_map = {0: "Normal (BENIGN)", 1: "Attack"}
     print("\n[EDA] Class distribution:")
     for k, v in counts.items():
         name = labels_map.get(k, str(k))
-        print(f"  {name:8s}: {v:6d}  ({100*v/len(df):.1f}%)")
+        print(f"  {name:15s}: {v:6d}  ({100*v/len(df):.1f}%)")
 
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig, ax = plt.subplots(figsize=(6, 4))
     ax.bar([labels_map.get(k, str(k)) for k in counts.index],
            counts.values, color=["steelblue", "tomato"], edgecolor="black")
-    ax.set_title("Class Distribution (NSL-KDD, Binary)")
+    ax.set_title("Class Distribution (CICIDS2017, Binary)")
     ax.set_ylabel("Sample Count")
     for i, v in enumerate(counts.values):
-        ax.text(i, v + 100, str(v), ha="center", fontsize=10)
+        ax.text(i, v + 0.01*len(df), str(v), ha="center", fontsize=10)
     plt.tight_layout()
     os.makedirs("plots", exist_ok=True)
     plt.savefig("plots/class_distribution.png", dpi=150)
@@ -215,7 +135,7 @@ def class_distribution(df: pd.DataFrame, label_col: str = "label") -> None:
 def feature_correlation_heatmap(
     X: pd.DataFrame,
     top_n: int = 20,
-    label_col: str = "label",
+    label_col: str = "Label",
 ) -> None:
     """
     Plot Pearson correlation of the top-N most label-correlated features.
@@ -268,17 +188,17 @@ def feature_importance_plot(
 
 def preprocess(
     data_dir: str = DATA_DIR,
+    sample_frac: float = 0.05,
     test_size: float = 0.2,
     random_state: int = 42,
     eda: bool = True,
 ) -> dict:
     """
     Full preprocessing pipeline:
-        1. Download (if needed) and load NSL-KDD
+        1. Load & clean CICIDS2017 dataset
         2. Binarise labels
-        3. Encode categoricals
-        4. Train / test split (if combined) or use provided split
-        5. Scale features
+        3. Train / test split
+        4. Scale features
 
     Returns
     -------
@@ -287,40 +207,37 @@ def preprocess(
         y_train, y_test      : np.ndarray
         feature_names        : list[str]
         scaler               : StandardScaler
-        encoders             : dict
         n_features           : int
     """
     print("=" * 60)
-    print("  NSL-KDD Preprocessing Pipeline")
+    print("  CICIDS2017 Preprocessing Pipeline")
     print("=" * 60)
 
-    # 1. Download / load
-    train_path, test_path = download_nsl_kdd(data_dir)
-    train_df, test_df = load_nsl_kdd(train_path, test_path)
+    # 1. Load, concatenate, clean inf/nans, and downsample
+    df = load_cicids2017(data_dir, sample_frac=sample_frac, random_state=random_state)
 
     # 2. Binary labels
-    train_df = binarise_labels(train_df)
-    test_df  = binarise_labels(test_df)
+    df = binarise_labels(df)
 
     if eda:
-        class_distribution(train_df)
+        class_distribution(df, label_col="Label")
 
-    # 3. One-Hot Encode categoricals
-    cat_cols = ["protocol_type", "service", "flag"]
-    train_df, test_df, ohe_columns = encode_categoricals(train_df, test_df, cat_cols)
+    # 3. Train / Test Split
+    feature_names = [c for c in df.columns if c != "Label"]
+    X_raw = df[feature_names].values.astype(np.float64)
+    y     = df["Label"].values
 
-    # 4. Split features / labels
-    feature_names = [c for c in train_df.columns if c != "label"]
-    X_train_raw = train_df[feature_names].values.astype(np.float64)
-    y_train     = train_df["label"].values
-    X_test_raw  = test_df[feature_names].values.astype(np.float64)
-    y_test      = test_df["label"].values
+    X_train_raw, X_test_raw, y_train, y_test = train_test_split(
+        X_raw, y, 
+        test_size=test_size, 
+        stratify=y, 
+        random_state=random_state
+    )
 
     if eda:
-        full_df = pd.concat([train_df, test_df], ignore_index=True)
-        feature_correlation_heatmap(full_df, top_n=20)
+        feature_correlation_heatmap(df, top_n=20, label_col="Label")
 
-    # 5. Scale
+    # 4. Scale
     X_train, X_test, scaler = scale_features(X_train_raw, X_test_raw)
 
     n_features = X_train.shape[1]
@@ -337,7 +254,6 @@ def preprocess(
         "y_test":       y_test,
         "feature_names": feature_names,
         "scaler":       scaler,
-        "ohe_columns":  ohe_columns,
         "n_features":   n_features,
     }
 

@@ -12,7 +12,7 @@ Purpose : Entry point - runs the full experimental pipeline:
             5. Metaheuristic 3: Simulated Annealing (SA)
             6. Comparative evaluation, plots, and results CSV
 
-Dataset : NSL-KDD (downloaded automatically on first run)
+Dataset : CICIDS2017 (downloaded automatically on first run)
 Model   : Random Forest (fixed base classifier)
 
 Usage
@@ -25,13 +25,13 @@ Usage
 
 Note on train/val/test split
 -----------------------------
-    X_train_full / y_train_full : the complete NSL-KDD training set
+    X_train_full / y_train_full : the complete CICIDS2017 training set
     X_train / X_val             : 80/20 stratified split of X_train_full
         - X_train / y_train used INSIDE the metaheuristic fitness loops
         - X_val   / y_val   used for fitness evaluation (validation set)
         - X_train_full used for the FINAL model refit after search ends
           (same data as the baseline, ensuring a fair comparison)
-    X_test / y_test             : held-out NSL-KDD test set (never touched
+    X_test / y_test             : held-out CICIDS2017 test set (never touched
                                   during search)
 
 Authors : Group XXX
@@ -112,7 +112,7 @@ def main():
     # 1.  Data preprocessing
     # -----------------------------------------------------------------------
     data = preprocess(eda=True)
-    X_train_full = data["X_train"]   # full NSL-KDD training set (scaled)
+    X_train_full = data["X_train"]   # full CICIDS2017 training set (scaled)
     X_test       = data["X_test"]
     y_train_full = data["y_train"]
     y_test       = data["y_test"]
