@@ -1,175 +1,144 @@
-# COMP2024 – IDS Feature Selection & Hyperparameter Optimisation
-## Group XXX | Spring 2026
+# IDS Feature Selection & Hyperparameter Optimisation using Metaheuristics
+
+**Module:** COMP2024 - Artificial Intelligence Methods  
+**Group:** Group Ambatucode
+**Authors:** Yew Xin Nie, Wong Yung Tung, Teoh Zhuo Qi  & Tai Sze-Song
 
 ---
 
-## Project Overview
+## Prerequisites
 
-This project implements **three metaheuristic algorithms** for joint
-feature selection and hyperparameter tuning of a **Random Forest** Intrusion
-Detection System (IDS) classifier trained on the **NSL-KDD** dataset.
-
-| Algorithm | Type | Search Strategy |
-|-----------|------|-----------------|
-| Genetic Algorithm (GA) | Evolutionary | Population-based, crossover + mutation |
-| Particle Swarm Optimisation (PSO) | Swarm intelligence | Velocity-guided particle movement |
-| Simulated Annealing (SA) | Trajectory-based | Probabilistic local search |
-
-All three are benchmarked against a **Baseline Random Forest** (all features,
-default sklearn hyperparameters).
-
----
-
-## File Structure
-
-```
-IDS_Project/
-├── main.py                   ← Entry point (run this)
-├── data_preprocessing.py     ← Download, clean, scale NSL-KDD
-├── evaluation.py             ← Fitness function, metrics, plots
-├── metaheuristic_ga.py       ← Genetic Algorithm
-├── metaheuristic_pso.py      ← Particle Swarm Optimisation
-├── metaheuristic_sa.py       ← Simulated Annealing
-├── requirements.txt          ← Python dependencies
-├── README.md                 ← This file
-├── data/                     ← NSL-KDD files (auto-downloaded)
-├── plots/                    ← All generated figures
-└── results/                  ← CSV metrics + feature masks JSON
-```
+- **Python 3.10+**
+- **requirements.txt** – All dependencies are listed in `requirements.txt`
 
 ---
 
 ## Setup Instructions
 
-### 1. Prerequisites
-- Python **3.10+** (tested with 3.11)
-- pip
+### Windows (Command Prompt / PowerShell / Terminal)
 
-### 2. Install Dependencies
+1. **Navigate to the project directory:**
+   ```bash
+   cd IDS_Project
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Or manually:
+### macOS (Terminal)
 
-```bash
-pip install numpy pandas scikit-learn matplotlib seaborn
-```
+1. **Navigate to the project directory:**
+   ```bash
+   cd IDS_Project
+   ```
 
-### 3. Dataset
+2. **Install dependencies:**
+   ```bash
+   pip3 install -r requirements.txt
+   ```
 
-The **NSL-KDD** dataset is **downloaded automatically** on the first run
-from the public GitHub mirror:
+> **Note:** On macOS, use `python3` instead of `python` for running the script.
 
-> https://github.com/defcom17/NSL_KDD
+---
 
-Files are saved to `data/KDDTrain+.txt` and `data/KDDTest+.txt`.
+## Dataset Instructions
 
-If you already have the files, place them in the `data/` folder with these
-exact names and the downloader will skip them.
+The **NSL-KDD dataset** is automatically downloaded on the first run.
 
-### 4. Run the Experiment
+- The dataset files are stored in the `data/` folder:
+  - `data/KDDTrain+.txt` – Training data
+  - `data/KDDTest+.txt` – Test data
 
-**Full experiment** (~30–60 min depending on hardware):
+- If the files do not exist locally, the script will automatically download them from the official NSL-KDD GitHub repository.
+  - https://github.com/Jehuty4949/NSL_KDD
 
+---
+
+## How to Run the Code
+
+### Windows
+
+**Full Experiment (~60-300 minutes)**
 ```bash
 python main.py
 ```
 
-**Quick test run** (< 5 minutes, reduced iterations):
-
+**Quick Test Run (~5 minutes)**
 ```bash
 python main.py --quick
 ```
 
-**Custom seed** (for reproducibility):
-
+**Custom Random Seed (optional)**
 ```bash
-python main.py --seed 123
+python main.py --seed 42
+```
+
+### macOS
+
+**Full Experiment (~60-300 minutes)**
+```bash
+python3 main.py
+```
+
+**Quick Test Run (~5 minutes)**
+```bash
+python3 main.py --quick
+```
+
+**Custom Random Seed (optional)**
+```bash
+python3 main.py --seed 42
 ```
 
 ---
 
-## Outputs
-
-| Output | Location | Description |
-|--------|----------|-------------|
-| Metrics CSV | `results/all_metrics.csv` | Accuracy, F1, FPR, etc. for all methods |
-| Feature masks | `results/best_feature_masks.json` | Binary feature masks per method |
-| Class distribution | `plots/class_distribution.png` | Attack vs Normal counts |
-| Feature importance | `plots/feature_importances.png` | RF baseline feature ranking |
-| Correlation heatmap | `plots/feature_correlation_heatmap.png` | Feature–label correlations |
-| Convergence curves | `plots/convergence_curves.png` | Fitness over iterations |
-| Metrics comparison | `plots/metrics_comparison.png` | Grouped bar chart |
-| Feature reduction | `plots/feature_reduction.png` | Features selected vs total |
-| Trade-off scatter | `plots/tradeoff_scatter.png` | F1 vs FPR bubble chart |
-
----
-
-## Methodology
-
-### Base Model
-- **Random Forest Classifier** (sklearn `RandomForestClassifier`)
-- Fixed as the underlying IDS model for all experiments
-
-### Optimisation Variables
-
-Each metaheuristic searches over:
-
-| Variable | Type | Range |
-|----------|------|-------|
-| Feature mask | Binary | {0, 1}^41 |
-| `n_estimators` | Integer | [10, 300] |
-| `max_depth` | Integer | [2, 30] |
-| `min_samples_split` | Integer | [2, 20] |
-| `min_samples_leaf` | Integer | [1, 10] |
-| `max_features` | Float | [0.1, 1.0] |
-
-### Fitness Function
+## Project Structure
 
 ```
-Fitness = 0.9 × F1_score  −  0.1 × (features_selected / total_features)
+IDS_Project/
+├── main.py                     # Entry point - runs the full experimental pipeline
+├── data_preprocessing.py       # Data loading, preprocessing, and EDA
+├── evaluation.py               # Model evaluation and plotting functions
+├── metaheuristic_ga.py         # Genetic Algorithm implementation
+├── metaheuristic_pso.py        # Particle Swarm Optimisation implementation
+├── metaheuristic_sa.py        # Simulated Annealing implementation
+├── metaheuristic_nsga2.py      # NSGA-II (Multi-Objective) implementation
+├── requirements.txt           # Python dependencies
+├── data/                     # Dataset folder
+│   ├── KDDTrain+.txt
+│   └── KDDTest+.txt
+├── plots/                     # Output plots
+│   ├── convergence_curves.png
+│   ├── metrics_comparison.png
+│   ├── feature_reduction.png
+│   ├── tradeoff_scatter.png
+│   ├── roc_curves.png
+│   ├── confusion_matrices.png
+│   ├── runtime_comparison.png
+│   ├── pareto_front.png
+│   ├── feature_importances.png
+│   ├── feature_correlation_heatmap.png
+│   └── class_distribution.png
+└── results/                  # Output results
+    ├── all_metrics.csv
+    └── best_feature_masks.json
 ```
 
-A higher fitness is better. The penalty term encourages sparse feature subsets.
+---
 
-### Evaluation Metrics
+## Output
 
-- Accuracy, Precision, Recall (TPR), F1-Score
-- False Positive Rate (FPR)
-- Number of Features Selected
-- Runtime (seconds)
+After running the experiment:
+
+- **Plots:** All visualizations are saved in `./plots/`
+- **Results:** Metrics CSV and feature masks JSON are saved in `./results/`
 
 ---
 
-## Algorithm Summary
+## Notes
 
-### Genetic Algorithm (GA)
-- **Chromosome**: binary feature mask + continuous HP vector
-- **Selection**: Tournament selection (k=3)
-- **Crossover**: Uniform crossover (features) + BLX-α (hyperparameters)
-- **Mutation**: Bit-flip (features) + Gaussian perturbation (HPs)
-- **Elitism**: Best individual preserved each generation
-
-### Particle Swarm Optimisation (PSO)
-- **Position**: continuous pre-sigmoid scores (features) + HP values
-- **Binary decode**: sigmoid transfer function → stochastic binarisation
-- **Velocity update**: standard PSO with linear inertia decay (w: 0.9→0.4)
-- **Coefficients**: c1=c2=2.0 (balanced cognitive/social)
-
-### Simulated Annealing (SA)
-- **Neighbourhood**: bit-flip (features) + Gaussian noise (HPs)
-- **Acceptance**: Metropolis criterion  exp(ΔE / T)
-- **Cooling**: geometric schedule  T ← T × 0.97
-- **Adaptive**: number of bits flipped scales with temperature
-
----
-
-## References
-
-1. Holland, J.H. (1975). *Adaptation in Natural and Artificial Systems*. MIT Press.
-2. Kennedy, J. & Eberhart, R. (1995). Particle swarm optimization. *ICNN*.
-3. Kirkpatrick, S., Gelatt, C.D. & Vecchi, M.P. (1983). Optimization by Simulated Annealing. *Science*, 220(4598).
-4. Tavallaee, M. et al. (2009). A Detailed Analysis of the KDD Cup 99 Data Set. *IEEE CISDA*.
-5. Breiman, L. (2001). Random Forests. *Machine Learning*, 45, 5–32.
+- The experiment performs binary classification (Normal vs Attack) using Random Forest as the base classifier.
+- Four metaheuristics are compared: GA, PSO, SA, and NSGA-II.
+- The `--quick` flag reduces population size and iterations for fast testing.

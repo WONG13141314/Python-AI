@@ -18,10 +18,10 @@ import urllib.request
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg")   # non-interactive backend — fixes Windows CMD tkinter error
+matplotlib.use("Agg")   # non-interactive backend -- fixes Windows CMD tkinter error
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
 
@@ -120,8 +120,8 @@ def load_nsl_kdd(train_path: str, test_path: str) -> tuple[pd.DataFrame, pd.Data
 def binarise_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert multi-class attack labels to binary:
-        'normal' → 0
-        anything else → 1  (attack)
+        'normal' -> 0
+        anything else -> 1  (attack)
     """
     df = df.copy()
     df["label"] = df["label"].apply(lambda x: 0 if x.strip() == "normal" else 1)
@@ -132,35 +132,43 @@ def encode_categoricals(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
     cat_cols: list[str] = ("protocol_type", "service", "flag"),
-) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     """
-    Ordinal-encode categorical columns using the training-set vocabulary.
-    Unseen categories in the test set are mapped to -1.
+    One-Hot-Encode categorical columns.
+
+    The training-set category vocabulary is used as the reference.
+    Any category present in the test set but absent from training is
+    silently ignored (its OHE columns will all be 0).  This avoids
+    data leakage and handles unseen categories safely.
 
     Returns
     -------
-    train_enc, test_enc, encoders : dict of {col: LabelEncoder}
+    train_enc, test_enc : DataFrames with OHE columns replacing originals
+    ohe_columns         : list of newly created OHE column names
     """
-    encoders: dict = {}
     train_enc = train_df.copy()
     test_enc  = test_df.copy()
 
-    for col in cat_cols:
-        le = LabelEncoder()
-        le.fit(train_df[col])
+    # Get dummies on training set (creates the reference column set)
+    train_enc = pd.get_dummies(train_enc, columns=list(cat_cols), dtype=float)
 
-        # Handle unseen labels in the test split gracefully
-        classes = list(le.classes_)
-        def safe_transform(series, classes=classes, le=le):
-            return series.apply(
-                lambda v: le.transform([v])[0] if v in classes else -1
-            )
+    # Get dummies on test set, then align columns to training set
+    test_enc = pd.get_dummies(test_enc, columns=list(cat_cols), dtype=float)
 
-        train_enc[col] = le.transform(train_df[col])
-        test_enc[col]  = safe_transform(test_df[col])
-        encoders[col]  = le
+    # Align: add missing columns as 0, drop extra columns
+    missing_cols = set(train_enc.columns) - set(test_enc.columns)
+    for c in missing_cols:
+        test_enc[c] = 0.0
+    test_enc = test_enc[train_enc.columns]   # enforce same column order
 
-    return train_enc, test_enc, encoders
+    ohe_columns = [c for c in train_enc.columns
+                   if any(c.startswith(cat + "_") for cat in cat_cols)]
+
+    print(f"  [OHE] Categorical columns expanded: {list(cat_cols)}")
+    print(f"  [OHE] New feature count: {len(train_enc.columns) - 1}")
+    print(f"  [OHE] One-hot columns added: {len(ohe_columns)}")
+
+    return train_enc, test_enc, ohe_columns
 
 
 def scale_features(
@@ -201,7 +209,7 @@ def class_distribution(df: pd.DataFrame, label_col: str = "label") -> None:
     os.makedirs("plots", exist_ok=True)
     plt.savefig("plots/class_distribution.png", dpi=150)
     plt.close()
-    print("  [Plot] Saved → plots/class_distribution.png")
+    print("  [Plot] Saved -> plots/class_distribution.png")
 
 
 def feature_correlation_heatmap(
@@ -230,7 +238,7 @@ def feature_correlation_heatmap(
     plt.tight_layout()
     plt.savefig("plots/feature_correlation_heatmap.png", dpi=150)
     plt.close()
-    print("  [Plot] Saved → plots/feature_correlation_heatmap.png")
+    print("  [Plot] Saved -> plots/feature_correlation_heatmap.png")
 
 
 def feature_importance_plot(
@@ -251,7 +259,7 @@ def feature_importance_plot(
     plt.tight_layout()
     plt.savefig("plots/feature_importances.png", dpi=150)
     plt.close()
-    print("  [Plot] Saved → plots/feature_importances.png")
+    print("  [Plot] Saved -> plots/feature_importances.png")
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +305,9 @@ def preprocess(
     if eda:
         class_distribution(train_df)
 
-    # 3. Encode categoricals
+    # 3. One-Hot Encode categoricals
     cat_cols = ["protocol_type", "service", "flag"]
-    train_df, test_df, encoders = encode_categoricals(train_df, test_df, cat_cols)
+    train_df, test_df, ohe_columns = encode_categoricals(train_df, test_df, cat_cols)
 
     # 4. Split features / labels
     feature_names = [c for c in train_df.columns if c != "label"]
@@ -329,7 +337,7 @@ def preprocess(
         "y_test":       y_test,
         "feature_names": feature_names,
         "scaler":       scaler,
-        "encoders":     encoders,
+        "ohe_columns":  ohe_columns,
         "n_features":   n_features,
     }
 

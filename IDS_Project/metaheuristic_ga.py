@@ -38,6 +38,7 @@ Authors : Group XXX
 
 import numpy as np
 import time
+from joblib import Parallel, delayed
 from evaluation import evaluate_solution, train_and_evaluate, HP_KEYS, _print_metrics
 
 
@@ -193,7 +194,7 @@ def run_ga(
     tournament_k   : tournament size for selection
     blx_alpha      : BLX-alpha parameter for HP crossover
     X_train_full   : full training set used ONLY for the final model refit
-                     (if None, falls back to X_train — for backward compat)
+                     (if None, falls back to X_train -- for backward compat)
     y_train_full   : labels for X_train_full
 
     Returns
@@ -224,14 +225,16 @@ def run_ga(
 
     # ---- Evolution loop ----
     for gen in range(n_generations):
-        # Evaluate all individuals (uses validation split for fitness)
-        fitness = np.array([
-            evaluate_solution(
-                *_split_chromosome(chrom, n_features),
-                X_train, y_train, X_val, y_val
+        # Evaluate all individuals in parallel (uses validation split for fitness)
+        fitness = np.array(
+            Parallel(n_jobs=-1)(
+                delayed(evaluate_solution)(
+                    *_split_chromosome(chrom, n_features),
+                    X_train, y_train, X_val, y_val, rf_n_jobs=1
+                )
+                for chrom in population
             )
-            for chrom in population
-        ])
+        )
 
         # Track best
         gen_best_idx = np.argmax(fitness)
